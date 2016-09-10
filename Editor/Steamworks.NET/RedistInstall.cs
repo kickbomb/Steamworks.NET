@@ -5,6 +5,7 @@ using System.IO;
 // This copys various files into their required locations when Unity is launched to make installation a breeze.
 [InitializeOnLoad]
 public class RedistInstall {
+/*
 	static RedistInstall() {
 		CopyFile("Assets/Plugins/Steamworks.NET/redist", "steam_appid.txt", false);
 
@@ -17,7 +18,7 @@ public class RedistInstall {
 	#endif
 #endif
 	}
-
+*/
 	static void CopyFile(string path, string filename, bool bCheckDifference) {
 		string strCWD = Directory.GetCurrentDirectory();
 		string strSource = Path.Combine(Path.Combine(strCWD, path), filename);

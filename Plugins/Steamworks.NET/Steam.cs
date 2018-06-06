@@ -9,7 +9,6 @@
 #define DISABLESTEAMWORKS
 #endif
 
-#if !DISABLESTEAMWORKS
 
 using System.Runtime.InteropServices;
 using IntPtr = System.IntPtr;
@@ -23,6 +22,7 @@ namespace Steamworks {
 		public const int SteamAPI64DLLSize = 250656;
 	}
 
+#if !DISABLESTEAMWORKS
 	public static class SteamAPI {
 		//----------------------------------------------------------------------------------------------------------------------------------------------------------//
 		//	Steam API setup & shutdown
@@ -475,6 +475,6 @@ namespace Steamworks {
 		private static IntPtr m_pSteamUGC;
 		private static IntPtr m_pSteamApps;
 	}
+#endif // !DISABLESTEAMWORKS
 }
 
-#endif // !DISABLESTEAMWORKS

@@ -1,4 +1,8 @@
-// Uncomment this out to disable copying
+// This file is provided under The MIT License as part of Steamworks.NET.
+// Copyright (c) 2013-2018 Riley Labrecque
+// Please see the included LICENSE.txt for additional information.
+
+// Uncomment this out or add it to your custom platform defines to disable checking the plugin platform settings.
 //#define DISABLEPLATFORMSETTINGS
 
 using UnityEngine;
@@ -13,7 +17,7 @@ public class RedistInstall {
 		CopyFile("Assets/Plugins/Steamworks.NET/redist", "steam_appid.txt", false);
 
 		// We only need to copy the dll into the project root on <= Unity 5.0
-#if UNITY_EDITOR_WIN && (!UNITY_5 || UNITY_5_0)
+#if UNITY_EDITOR_WIN && (UNITY_4_7 || UNITY_5_0)
 	#if UNITY_EDITOR_64
 		CopyFile("Assets/Plugins/x86_64", "steam_api64.dll", true);
 	#else
@@ -21,7 +25,7 @@ public class RedistInstall {
 	#endif
 #endif
 
-#if UNITY_5
+#if UNITY_5 || UNITY_2017
 	#if !DISABLEPLATFORMSETTINGS
 		SetPlatformSettings();
 	#endif
@@ -63,116 +67,197 @@ public class RedistInstall {
 			Debug.Log(string.Format("[Steamworks.NET] Successfully copied {0} into the project root. Please relaunch Unity.", filename));
 		}
 		else {
-			Debug.LogWarning(string.Format("[Steamworks.NET] Could not copy {0} into the project root. File.Copy() Failed. Place {0} from the Steamworks SDK in the project root manually.", filename));
+			Debug.LogWarning(string.Format("[Steamworks.NET] Could not copy {0} into the project root. File.Copy() Failed. Please copy {0} into the project root manually.", Path.Combine(path, filename)));
 		}
 	}
 
-#if UNITY_5
+#if UNITY_5 || UNITY_2017 || UNITY_2017_1_OR_NEWER
 	static void SetPlatformSettings() {
 		foreach(var plugin in PluginImporter.GetAllImporters()) {
-			// Skip any absolute paths, as they are only built in plugins.
+			// Skip any null plugins, why is this a thing?!
+			if(plugin == null) {
+				continue;
+			}
+
+			// Skip any absolute paths, as they are only builtin plugins.
 			if(Path.IsPathRooted(plugin.assetPath)) {
 				continue;
 			}
 
+			bool didUpdate = false;
 			string filename = Path.GetFileName(plugin.assetPath);
+
 			switch(filename) {
-				case "CSteamworks.bundle":
-					ResetPluginSettings(plugin, "AnyCPU", "OSX");
-					SetCompatibleWithOSX(plugin);
+				case "libsteam_api.dylib":
+					didUpdate |= ResetPluginSettings(plugin, "AnyCPU", "OSX");
+					didUpdate |= SetCompatibleWithOSX(plugin);
 					break;
-				case "libCSteamworks.so":
 				case "libsteam_api.so":
 					if(plugin.assetPath.Contains("x86_64")) {
-						ResetPluginSettings(plugin, "x86_64", "Linux");
-						SetCompatibleWithLinux(plugin, BuildTarget.StandaloneLinux64);
+						didUpdate |= ResetPluginSettings(plugin, "x86_64", "Linux");
+						didUpdate |= SetCompatibleWithLinux(plugin, BuildTarget.StandaloneLinux64);
 					}
 					else {
-						ResetPluginSettings(plugin, "x86", "Linux");
-						SetCompatibleWithLinux(plugin, BuildTarget.StandaloneLinux);
-					}
-					break;
-				case "CSteamworks.dll":
-					if (plugin.assetPath.Contains("x86_64")) {
-						ResetPluginSettings(plugin, "x86_64", "Windows");
-						SetCompatibleWithWindows(plugin, BuildTarget.StandaloneWindows64);
-					}
-					else {
-						ResetPluginSettings(plugin, "x86", "Windows");
-						SetCompatibleWithWindows(plugin, BuildTarget.StandaloneWindows);
+						didUpdate |= ResetPluginSettings(plugin, "x86", "Linux");
+						didUpdate |= SetCompatibleWithLinux(plugin, BuildTarget.StandaloneLinux);
 					}
 					break;
 				case "steam_api.dll":
 				case "steam_api64.dll":
 					if (plugin.assetPath.Contains("x86_64")) {
-						ResetPluginSettings(plugin, "x86_64", "Windows");
+						didUpdate |= ResetPluginSettings(plugin, "x86_64", "Windows");
+#if UNITY_5_3_OR_NEWER
+						didUpdate |= SetCompatibleWithWindows(plugin, BuildTarget.StandaloneWindows64);
+#endif
 					}
 					else {
-						ResetPluginSettings(plugin, "x86", "Windows");
+						didUpdate |= ResetPluginSettings(plugin, "x86", "Windows");
+#if UNITY_5_3_OR_NEWER
+						didUpdate |= SetCompatibleWithWindows(plugin, BuildTarget.StandaloneWindows);
+#endif
 					}
-					SetCompatibleWithEditor(plugin);
+
+#if !UNITY_5_3_OR_NEWER
+					// We do this because Unity had a bug where dependent dll's didn't get loaded from the Plugins
+					// folder in actual builds. But they do in the editor now! So close... Unity bug number: 728945
+					// So ultimately we must keep using RedistCopy to copy steam_api[64].dll next to the .exe on builds, and
+					// we don't want a useless duplicate version of the dll ending up in the Plugins folder.
+					// This was fixed in Unity 5.3!
+					didUpdate |= SetCompatibleWithEditor(plugin);
+#endif
 					break;
+			}
+
+			if (didUpdate) {
+				plugin.SaveAndReimport();
 			}
 		}
 	}
 
-	static void ResetPluginSettings(PluginImporter plugin, string CPU, string OS) {
-#if UNITY_5_5_OR_NEWER
-		plugin.ClearSettings();
+	static bool ResetPluginSettings(PluginImporter plugin, string CPU, string OS) {
+		bool didUpdate = false;
+
+		if (plugin.GetCompatibleWithAnyPlatform() != false) {
+			plugin.SetCompatibleWithAnyPlatform(false);
+			didUpdate = true;
+		}
+
+		if (plugin.GetCompatibleWithEditor() != true) {
+			plugin.SetCompatibleWithEditor(true);
+			didUpdate = true;
+		}
+
+		if (plugin.GetEditorData("CPU") != CPU) {
+			plugin.SetEditorData("CPU", CPU);
+			didUpdate = true;
+		}
+
+		if (plugin.GetEditorData("OS") != OS) {
+			plugin.SetEditorData("OS", OS);
+			didUpdate = true;
+		}
+
+		return didUpdate;
+	}
+
+	static bool SetCompatibleWithOSX(PluginImporter plugin) {
+		bool didUpdate = false;
+
+#if UNITY_2017_3_OR_NEWER
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSX, true);
+#else
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXIntel, true);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXIntel64, true);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXUniversal, true);
 #endif
-		plugin.SetCompatibleWithAnyPlatform(false);
-		plugin.SetCompatibleWithEditor(true);
-		plugin.SetEditorData("CPU", CPU);
-		plugin.SetEditorData("OS", OS);
+
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinux, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinux64, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinuxUniversal, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneWindows, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneWindows64, false);
+
+		return didUpdate;
 	}
 
-	static void SetCompatibleWithOSX(PluginImporter plugin) {
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXIntel, true);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXIntel64, true);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXUniversal, true);
+	static bool SetCompatibleWithLinux(PluginImporter plugin, BuildTarget platform) {
+		bool didUpdate = false;
 
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneLinux, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneLinux64, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneLinuxUniversal, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneWindows, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneWindows64, false);
-		plugin.SaveAndReimport();
+		if (platform == BuildTarget.StandaloneLinux) {
+			didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinux, true);
+			didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinux64, false);
+		}
+		else {
+			didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinux, false);
+			didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinux64, true);
+		}
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinuxUniversal, true);
+
+#if UNITY_2017_3_OR_NEWER
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSX, false);
+#else
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXIntel, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXIntel64, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXUniversal, false);
+#endif
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneWindows, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneWindows64, false);
+
+		return didUpdate;
 	}
 
-	static void SetCompatibleWithLinux(PluginImporter plugin, BuildTarget platform) {
-		plugin.SetCompatibleWithPlatform(platform, true);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneLinuxUniversal, true);
+	static bool SetCompatibleWithWindows(PluginImporter plugin, BuildTarget platform) {
+		bool didUpdate = false;
 
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXIntel, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXIntel64, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXUniversal, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneWindows, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneWindows64, false);
-		plugin.SaveAndReimport();
+		if (platform == BuildTarget.StandaloneWindows) {
+			didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneWindows, true);
+			didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneWindows64, false);
+		}
+		else {
+			didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneWindows, false);
+			didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneWindows64, true);
+		}
+
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinux64, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinux, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinuxUniversal, false);
+#if UNITY_2017_3_OR_NEWER
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSX, false);
+#else
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXIntel, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXIntel64, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXUniversal, false);
+#endif
+
+		return didUpdate;
 	}
 
-	static void SetCompatibleWithWindows(PluginImporter plugin, BuildTarget platform) {
-		plugin.SetCompatibleWithPlatform(platform, true);
+	static bool SetCompatibleWithEditor(PluginImporter plugin) {
+		bool didUpdate = false;
 
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneLinux64, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneLinux, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneLinuxUniversal, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXIntel, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXIntel64, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXUniversal, false);
-		plugin.SaveAndReimport();
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinux64, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinux, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneLinuxUniversal, false);
+#if UNITY_2017_3_OR_NEWER
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSX, false);
+#else
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXIntel, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXIntel64, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneOSXUniversal, false);
+#endif
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneWindows, false);
+		didUpdate |= SetCompatibleWithPlatform(plugin, BuildTarget.StandaloneWindows64, false);
+
+		return didUpdate;
 	}
 
-	static void SetCompatibleWithEditor(PluginImporter plugin) {
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneLinux64, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneLinux, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneLinuxUniversal, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXIntel, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXIntel64, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneOSXUniversal, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneWindows, false);
-		plugin.SetCompatibleWithPlatform(BuildTarget.StandaloneWindows64, false);
-		plugin.SaveAndReimport();
+	static bool SetCompatibleWithPlatform(PluginImporter plugin, BuildTarget platform, bool enable) {
+		if (plugin.GetCompatibleWithPlatform(platform) == enable) {
+			return false;
+		}
+
+		plugin.SetCompatibleWithPlatform(platform, enable);
+		return true;
 	}
-#endif // UNITY_5
+#endif // UNITY_5 || UNITY_2017 || UNITY_2017_1_OR_NEWER
 }
